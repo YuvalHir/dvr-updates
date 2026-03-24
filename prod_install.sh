@@ -13,7 +13,7 @@ PROJECT_DIR="$HOME/TacticalDVR"
 USER_NAME=$(whoami)
 
 # --- Logo Selection ---
-echo "V1.6.6 🎨 Choose Tactical Logo:"
+echo "🎨 Choose Tactical Logo:"
 echo "1) Meyuhadim (Default)"
 echo "2) Dromit"
 echo "3) Zfonit"
@@ -85,6 +85,28 @@ fi
 
 # 1. התקנת תלויות מערכת
 echo "[1/9] Installing system dependencies..."
+
+# Force-enable Debian non-free components (needed for preferred Intel VAAPI package).
+enable_non_free_repos() {
+    if [ -f /etc/apt/sources.list ]; then
+        run_sudo sed -Ei '/^[[:space:]]*deb(-src)?[[:space:]].*[[:space:]]main([[:space:]]|$)/{
+            /[[:space:]]contrib([[:space:]]|$)/! s/$/ contrib/
+            /[[:space:]]non-free([[:space:]]|$)/! s/$/ non-free/
+            /[[:space:]]non-free-firmware([[:space:]]|$)/! s/$/ non-free-firmware/
+        }' /etc/apt/sources.list
+    fi
+
+    for src_file in /etc/apt/sources.list.d/*.sources; do
+        [ -f "$src_file" ] || continue
+        run_sudo sed -Ei '/^[[:space:]]*Components:[[:space:]]*/{
+            /[[:space:]]contrib([[:space:]]|$)/! s/$/ contrib/
+            /[[:space:]]non-free([[:space:]]|$)/! s/$/ non-free/
+            /[[:space:]]non-free-firmware([[:space:]]|$)/! s/$/ non-free-firmware/
+        }' "$src_file"
+    done
+}
+
+enable_non_free_repos
 run_sudo apt update
 
 # Function to check if a package is truly available for installation
@@ -375,9 +397,36 @@ fi
 
 echo "[Hardware Acceleration] Checking for Intel iGPU..."
 if lspci | grep -i "vga.*intel" > /dev/null; then
-    run_sudo apt install -y intel-media-va-driver-non-free vainfo gstreamer1.0-vaapi
-    if vainfo 2>&1 | grep -i "VAProfileH264.*VAEntrypointVLD" > /dev/null; then
-        echo "   ✅ Hardware Acceleration Active"
+    HW_PKGS=()
+
+    # Force non-free Intel media driver for better codec coverage.
+    if is_pkg_available "intel-media-va-driver-non-free"; then
+        HW_PKGS+=("intel-media-va-driver-non-free")
+    else
+        echo "   ❌ ERROR: 'intel-media-va-driver-non-free' is unavailable."
+        echo "   -> Ensure contrib/non-free/non-free-firmware repos are enabled and apt update succeeded."
+        exit 1
+    fi
+
+    if is_pkg_available "vainfo"; then
+        HW_PKGS+=("vainfo")
+    fi
+    if is_pkg_available "gstreamer1.0-vaapi"; then
+        HW_PKGS+=("gstreamer1.0-vaapi")
+    fi
+
+    if [ "${#HW_PKGS[@]}" -gt 0 ]; then
+        run_sudo apt install -y "${HW_PKGS[@]}"
+    fi
+
+    if command -v vainfo >/dev/null 2>&1; then
+        if vainfo 2>&1 | grep -i "VAProfileH264.*VAEntrypointVLD" > /dev/null; then
+            echo "   ✅ Hardware Acceleration Active"
+        else
+            echo "   ⚠️  VAAPI installed, but H264 decode profile not detected."
+        fi
+    else
+        echo "   ⚠️  'vainfo' not available; skipped VAAPI runtime verification."
     fi
 fi
 
