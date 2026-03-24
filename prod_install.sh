@@ -46,17 +46,19 @@ github_curl() {
         return 0
     fi
     
+    # Use array for curl arguments to prevent 'blank argument' issues
+    local curl_opts=(-s -L)
     if [ -n "${GITHUB_TOKEN:-}" ]; then
-        curl -H "Authorization: token $GITHUB_TOKEN" -s -L "$url"
-    else
-        curl -s -L "$url"
+        curl_opts+=(-H "Authorization: token $GITHUB_TOKEN")
     fi
+    
+    curl "${curl_opts[@]}" "$url"
 }
 
 # Automatically find the latest tag if not specified
 if [ -z "${TAG:-}" ]; then
     echo "🔍 Checking GitHub for the latest version..."
-    LATEST_JSON=$(github_curl "https://api.github.com/repos/$REPO_USER/$REPO_NAME/releases/latest")
+    LATEST_JSON=$(github_curl "https://api.github.com/repos/$REPO_USER/$REPO_NAME/releases/latest" || echo "{}")
     TAG=$(echo "$LATEST_JSON" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/' || true)
     
     if [ -z "$TAG" ]; then
@@ -85,15 +87,17 @@ fi
 echo "[1/9] Installing system dependencies..."
 run_sudo apt update
 
-# Function to check if a package is available for installation
+# Function to check if a package is truly available for installation
 is_pkg_available() {
-    apt-cache show "$1" >/dev/null 2>&1
+    # Check if package exists AND has an installation candidate
+    apt-cache policy "$1" 2>/dev/null | grep -q "Candidate: [^ ]" && \
+    ! apt-cache policy "$1" 2>/dev/null | grep -q "Candidate: (none)"
 }
 
 # Base packages that usually have stable names
 PKGS="x11-xserver-utils wget curl gstreamer1.0-tools gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-libav ffmpeg unclutter v4l-utils gvfs-backends gvfs-fuse mtp-tools libmtp-runtime ifuse"
 
-# Add libimobiledevice based on availability
+# Add libimobiledevice based on availability (Prefer the newer name for Trixie)
 if is_pkg_available "libimobiledevice-1.0-6"; then
     PKGS="$PKGS libimobiledevice-1.0-6"
 elif is_pkg_available "libimobiledevice6"; then
@@ -153,7 +157,7 @@ verify_sha() {
     fi
 }
 
-RELEASE_JSON=$(github_curl "https://api.github.com/repos/$REPO_USER/$REPO_NAME/releases/tags/$TAG")
+RELEASE_JSON=$(github_curl "https://api.github.com/repos/$REPO_USER/$REPO_NAME/releases/tags/$TAG" || echo "{}")
 
 get_asset_url() {
     local asset_name="$1"
