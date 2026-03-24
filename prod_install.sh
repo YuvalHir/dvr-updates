@@ -13,7 +13,7 @@ PROJECT_DIR="$HOME/TacticalDVR"
 USER_NAME=$(whoami)
 
 # --- Logo Selection ---
-echo "🎨 Choose Tactical Logo:"
+echo "V1.6.6 🎨 Choose Tactical Logo:"
 echo "1) Meyuhadim (Default)"
 echo "2) Dromit"
 echo "3) Zfonit"
