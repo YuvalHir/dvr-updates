@@ -159,9 +159,8 @@ mkdir -p "$PROJECT_DIR/assets"
 
 # 3. Preparing Logo
 echo "[3/9] Preparing Logo..."
-LOGO_URL="https://github.com/YuvalHir/dvr-updates/raw/main/$SELECTED_LOGO"
-if curl -s -L --head "$LOGO_URL" | grep "200 OK" > /dev/null; then
-    curl -L -o "$PROJECT_DIR/assets/tactical_logo.png" "$LOGO_URL"
+LOGO_URL="https://raw.githubusercontent.com/YuvalHir/dvr-updates/main/$SELECTED_LOGO"
+if curl -fsSL "$LOGO_URL" -o "$PROJECT_DIR/assets/tactical_logo.png"; then
     cp "$PROJECT_DIR/assets/tactical_logo.png" "$PROJECT_DIR/dist/tactical_logo.png"
 else
     echo "⚠️  Could not find logo at $LOGO_URL, using default placeholder."
@@ -198,7 +197,15 @@ RELEASE_JSON=$(github_curl "https://api.github.com/repos/$REPO_USER/$REPO_NAME/r
 
 get_asset_url() {
     local asset_name="$1"
-    echo "$RELEASE_JSON" | grep -C 5 "\"name\": \"$asset_name\"" | grep "\"browser_download_url\":" | head -n 1 | sed -E 's/.*"([^"]+)".*/\1/' || true
+    echo "$RELEASE_JSON" | awk -v target="$asset_name" '
+        $0 ~ "\"name\": \"" target "\"" {found=1; next}
+        found && $0 ~ "\"browser_download_url\":" {
+            gsub(/.*"browser_download_url": "/, "", $0)
+            gsub(/".*/, "", $0)
+            print
+            exit
+        }
+    ' || true
 }
 
 RECORDER_URL=$(get_asset_url "tactical_recorder")
