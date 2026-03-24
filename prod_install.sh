@@ -2,20 +2,15 @@
 
 # ==========================================
 #  TACTICAL DVR - FIELD INSTALLATION SCRIPT
-#  Version: 1.6.5 (Field Ready)
+#  Version: 1.6.5 (Zero-Auth Ready)
 # ==========================================
+
+# Exit on error, but handle some errors manually
+set -e
 
 # --- הגדרות משתמש ---
 PROJECT_DIR="$HOME/TacticalDVR"
 USER_NAME=$(whoami)
-
-# Handle GitHub Token (Optional for public dvr-updates repo)
-if [ -z "$GITHUB_TOKEN" ]; then
-    echo "💡 Note: GitHub Token is optional for public releases from 'dvr-updates'."
-    echo -n "   Enter GitHub Token if you need to access private assets (or press Enter to skip): "
-    read -s GITHUB_TOKEN
-    echo ""
-fi
 
 # --- Logo Selection ---
 echo "🎨 Choose Tactical Logo:"
@@ -33,7 +28,7 @@ esac
 
 # --- Helper for sudo ---
 run_sudo() {
-    if [ -n "$SUDO_PASSWORD" ]; then
+    if [ -n "${SUDO_PASSWORD:-}" ]; then
         echo "$SUDO_PASSWORD" | sudo -S "$@"
     else
         sudo "$@"
@@ -44,19 +39,26 @@ run_sudo() {
 REPO_USER="YuvalHir"
 REPO_NAME="dvr-updates"
 
-# Helper for curl with optional token
+# Helper for curl with optional token and validation
 github_curl() {
-    if [ -n "$GITHUB_TOKEN" ]; then
-        curl -H "Authorization: token $GITHUB_TOKEN" "$@"
+    local url="$1"
+    if [ -z "$url" ]; then
+        return 0
+    fi
+    
+    if [ -n "${GITHUB_TOKEN:-}" ]; then
+        curl -H "Authorization: token $GITHUB_TOKEN" -s -L "$url"
     else
-        curl "$@"
+        curl -s -L "$url"
     fi
 }
 
 # Automatically find the latest tag if not specified
-if [ -z "$TAG" ]; then
+if [ -z "${TAG:-}" ]; then
     echo "🔍 Checking GitHub for the latest version..."
-    TAG=$(github_curl -s "https://api.github.com/repos/$REPO_USER/$REPO_NAME/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
+    LATEST_JSON=$(github_curl "https://api.github.com/repos/$REPO_USER/$REPO_NAME/releases/latest")
+    TAG=$(echo "$LATEST_JSON" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/' || true)
+    
     if [ -z "$TAG" ]; then
         echo "⚠️  Could not detect latest tag, falling back to V1.6.5"
         TAG="V1.6.5"
@@ -92,17 +94,19 @@ mkdir -p "$PROJECT_DIR/assets"
 
 # 3. Preparing Logo
 echo "[3/9] Preparing Logo..."
-# Logo is in public repo, no token needed
 LOGO_URL="https://github.com/YuvalHir/dvr-updates/raw/main/$SELECTED_LOGO"
-curl -L -o "$PROJECT_DIR/assets/tactical_logo.png" "$LOGO_URL"
-cp "$PROJECT_DIR/assets/tactical_logo.png" "$PROJECT_DIR/dist/tactical_logo.png"
+if curl -s -L --head "$LOGO_URL" | grep "200 OK" > /dev/null; then
+    curl -L -o "$PROJECT_DIR/assets/tactical_logo.png" "$LOGO_URL"
+    cp "$PROJECT_DIR/assets/tactical_logo.png" "$PROJECT_DIR/dist/tactical_logo.png"
+else
+    echo "⚠️  Could not find logo at $LOGO_URL, using default placeholder."
+fi
 
 # 4. הכנת קבצים בינאריים (SHA-256 Verification)
 echo "[4/9] Preparing binaries..."
 
 is_online() {
-    curl -s --connect-timeout 2 https://google.com > /dev/null
-    return $?
+    curl -s --connect-timeout 2 https://google.com > /dev/null && return 0 || return 1
 }
 
 verify_sha() {
@@ -110,24 +114,26 @@ verify_sha() {
     local local_file=$2
     local remote_sha_url=$3
     
-    if [ ! -f "$local_file" ]; then return 1; fi
+    if [ ! -f "$local_file" ] || [ -z "$remote_sha_url" ]; then 
+        return 1
+    fi
     
     echo "      Verifying $filename checksum..."
-    local remote_sha=$(github_curl -s -L "$remote_sha_url" | tr -d '[:space:]')
+    local remote_sha=$(github_curl "$remote_sha_url" | tr -d '[:space:]')
     local local_sha=$(sha256sum "$local_file" | awk '{print $1}' | tr -d '[:space:]')
     
-    if [ "$remote_sha" == "$local_sha" ]; then
-        return 0 # Match
+    if [ -n "$remote_sha" ] && [ "$remote_sha" == "$local_sha" ]; then
+        return 0
     else
-        return 1 # Mismatch
+        return 1
     fi
 }
 
-RELEASE_INFO=$(github_curl -s "https://api.github.com/repos/$REPO_USER/$REPO_NAME/releases/tags/$TAG")
+RELEASE_JSON=$(github_curl "https://api.github.com/repos/$REPO_USER/$REPO_NAME/releases/tags/$TAG")
 
 get_asset_url() {
-    # Switch to browser_download_url for public access without token
-    echo "$RELEASE_INFO" | grep -C 5 "\"name\": \"$1\"" | grep "\"browser_download_url\":" | head -n 1 | sed -E 's/.*"([^"]+)".*/\1/'
+    local asset_name="$1"
+    echo "$RELEASE_JSON" | grep -C 5 "\"name\": \"$asset_name\"" | grep "\"browser_download_url\":" | head -n 1 | sed -E 's/.*"([^"]+)".*/\1/' || true
 }
 
 RECORDER_URL=$(get_asset_url "tactical_recorder")
@@ -141,8 +147,7 @@ NEED_PLAYER=true
 if is_online; then
     echo "🌐 System is online. Checking for updates..."
     
-    # Check current dir (SCP destination) first
-    if [ -f "./tactical_recorder" ]; then
+    if [ -f "./tactical_recorder" ] && [ -n "$RECORDER_SHA_URL" ]; then
         if verify_sha "tactical_recorder" "./tactical_recorder" "$RECORDER_SHA_URL"; then
             echo "   -> Local tactical_recorder is up to date."
             cp "./tactical_recorder" "$PROJECT_DIR/dist/tactical_recorder"
@@ -150,23 +155,21 @@ if is_online; then
         fi
     fi
     
-    # Check already installed dist if not found in current dir
-    if [ "$NEED_RECORDER" = true ] && [ -f "$PROJECT_DIR/dist/tactical_recorder" ]; then
+    if [ "$NEED_RECORDER" = true ] && [ -f "$PROJECT_DIR/dist/tactical_recorder" ] && [ -n "$RECORDER_SHA_URL" ]; then
         if verify_sha "tactical_recorder" "$PROJECT_DIR/dist/tactical_recorder" "$RECORDER_SHA_URL"; then
             echo "   -> Installed tactical_recorder is up to date."
             NEED_RECORDER=false
         fi
     fi
 
-    # Same for Player
-    if [ -f "./tactical_player" ]; then
+    if [ -f "./tactical_player" ] && [ -n "$PLAYER_SHA_URL" ]; then
         if verify_sha "tactical_player" "./tactical_player" "$PLAYER_SHA_URL"; then
             echo "   -> Local tactical_player is up to date."
             cp "./tactical_player" "$PROJECT_DIR/dist/tactical_player"
             NEED_PLAYER=false
         fi
     fi
-    if [ "$NEED_PLAYER" = true ] && [ -f "$PROJECT_DIR/dist/tactical_player" ]; then
+    if [ "$NEED_PLAYER" = true ] && [ -f "$PROJECT_DIR/dist/tactical_player" ] && [ -n "$PLAYER_SHA_URL" ]; then
         if verify_sha "tactical_player" "$PROJECT_DIR/dist/tactical_player" "$PLAYER_SHA_URL"; then
             echo "   -> Installed tactical_player is up to date."
             NEED_PLAYER=false
@@ -174,7 +177,6 @@ if is_online; then
     fi
 else
     echo "📡 System is offline. Using local files..."
-    # If scp'd to current dir, use them
     if [ -f "./tactical_recorder" ]; then cp "./tactical_recorder" "$PROJECT_DIR/dist/tactical_recorder"; fi
     if [ -f "./tactical_player" ]; then cp "./tactical_player" "$PROJECT_DIR/dist/tactical_player"; fi
     
@@ -190,13 +192,22 @@ fi
 
 # Download if still needed
 if [ "$NEED_RECORDER" = true ]; then
-    echo "   -> Downloading latest tactical_recorder..."
-    # No Authorization or Accept headers needed for browser_download_url
-    curl -L -o "$PROJECT_DIR/dist/tactical_recorder" "$RECORDER_URL"
+    if [ -n "$RECORDER_URL" ]; then
+        echo "   -> Downloading latest tactical_recorder..."
+        curl -L -o "$PROJECT_DIR/dist/tactical_recorder" "$RECORDER_URL"
+    else
+        echo "❌ ERROR: Could not find tactical_recorder in release $TAG"
+        exit 1
+    fi
 fi
 if [ "$NEED_PLAYER" = true ]; then
-    echo "   -> Downloading latest tactical_player..."
-    curl -L -o "$PROJECT_DIR/dist/tactical_player" "$PLAYER_URL"
+    if [ -n "$PLAYER_URL" ]; then
+        echo "   -> Downloading latest tactical_player..."
+        curl -L -o "$PROJECT_DIR/dist/tactical_player" "$PLAYER_URL"
+    else
+        echo "❌ ERROR: Could not find tactical_player in release $TAG"
+        exit 1
+    fi
 fi
 
 # 5. הגדרת הרשאות
@@ -225,25 +236,21 @@ export DISPLAY=:0
 export XAUTHORITY=\$HOME/.Xauthority
 
 # --- SHADLAN FIX (8-bit + Limited RGB + Force 1080p) ---
-# Critical for compatibility with military devices
 xrandr --output HDMI-1 --set "max bpc" 8 2>/dev/null
 xrandr --output HDMI-1 --set "Broadcast RGB" "Limited 16-235" 2>/dev/null
 xrandr --output HDMI-1 --mode 1920x1080 --rate 60 2>/dev/null
 
-# --- Power Management Disable ---
 pkill -f xscreensaver 2>/dev/null
 xset s off
 xset -dpms
 xset s noblank 2>/dev/null
 xhost +local:\$(whoami) > /dev/null
 
-# XFCE specific tweaks
 if command -v xfconf-query >/dev/null 2>&1; then
     xfconf-query -c xfce4-power-manager -p /xfce4-power-manager/dpms-enabled -s false 2>/dev/null
     xfconf-query -c xfce4-screensaver -p /saver/enabled -s false 2>/dev/null
 fi
 
-# --- Hide Mouse Cursor ---
 unclutter -idle 0.1 -root & 
 
 LOG_DIR="$PROJECT_DIR/logs"
@@ -288,37 +295,18 @@ EOF
     run_sudo sed -i 's/^GRUB_CMDLINE_LINUX_DEFAULT=.*/GRUB_CMDLINE_LINUX_DEFAULT="quiet splash net.ifnames=0 biosdevname=0"/' /etc/default/grub
     run_sudo update-grub 2>/dev/null || true
 
-    # --- תיקון קריטי לרוחב פס USB (עבור Dual Capture Card) ---
     echo "[Extra] Applying USB Bandwidth Fix (Quirks)..."
     echo "options uvcvideo quirks=128" | run_sudo tee /etc/modprobe.d/uvcvideo.conf > /dev/null
-    # ניסיון טעינה מיידי
     run_sudo modprobe -r uvcvideo 2>/dev/null || true
     run_sudo modprobe uvcvideo quirks=128 2>/dev/null || true
 fi
 
-# --- Hardware Acceleration Setup ---
 echo "[Hardware Acceleration] Checking for Intel iGPU..."
 if lspci | grep -i "vga.*intel" > /dev/null; then
-    echo "   -> Intel iGPU detected. Installing VA-API drivers..."
     run_sudo apt install -y intel-media-va-driver-non-free vainfo gstreamer1.0-vaapi
-
-    echo "   -> Validating Hardware Acceleration..."
-    # Check if vainfo reports H264 decoding profile (VLD)
     if vainfo 2>&1 | grep -i "VAProfileH264.*VAEntrypointVLD" > /dev/null; then
-        echo "============================================="
-        echo "   ✅ Hardware Acceleration: Supported and Active"
-        echo "============================================="
-    else
-        echo "============================================="
-        echo "   ⚠️ Hardware Acceleration: Drivers installed, but validation failed."
-        echo "      Falling back to Software Decoding."
-        echo "============================================="
+        echo "   ✅ Hardware Acceleration Active"
     fi
-else
-    echo "============================================="
-    echo "   ➖ Hardware Acceleration: Not Supported/Failed (No Intel iGPU found)."
-    echo "      Using Software Decoding."
-    echo "============================================="
 fi
 
 echo "============================================="
