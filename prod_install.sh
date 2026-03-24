@@ -84,7 +84,15 @@ fi
 # 1. התקנת תלויות מערכת
 echo "[1/9] Installing system dependencies..."
 run_sudo apt update
-run_sudo apt install -y x11-xserver-utils wget curl gstreamer1.0-tools gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-libav ffmpeg unclutter v4l-utils gvfs-backends gvfs-fuse mtp-tools libmtp-runtime libimobiledevice6 ifuse
+
+# Detect correct libimobiledevice package name
+LIBIMOBILE="libimobiledevice6"
+if ! apt-cache show $LIBIMOBILE >/dev/null 2>&1; then
+    echo "   -> $LIBIMOBILE not found, trying libimobiledevice-1.0-6..."
+    LIBIMOBILE="libimobiledevice-1.0-6"
+fi
+
+run_sudo apt install -y x11-xserver-utils wget curl gstreamer1.0-tools gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-libav ffmpeg unclutter v4l-utils gvfs-backends gvfs-fuse mtp-tools libmtp-runtime $LIBIMOBILE ifuse
 
 # 2. יצירת מבנה תיקיות
 echo "[2/9] Creating directories..."
