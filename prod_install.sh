@@ -85,14 +85,30 @@ fi
 echo "[1/9] Installing system dependencies..."
 run_sudo apt update
 
-# Detect correct libimobiledevice package name
-LIBIMOBILE="libimobiledevice6"
-if ! apt-cache show $LIBIMOBILE >/dev/null 2>&1; then
-    echo "   -> $LIBIMOBILE not found, trying libimobiledevice-1.0-6..."
-    LIBIMOBILE="libimobiledevice-1.0-6"
+# Function to check if a package is available for installation
+is_pkg_available() {
+    apt-cache show "$1" >/dev/null 2>&1
+}
+
+# Base packages that usually have stable names
+PKGS="x11-xserver-utils wget curl gstreamer1.0-tools gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-libav ffmpeg unclutter v4l-utils gvfs-backends gvfs-fuse mtp-tools libmtp-runtime ifuse"
+
+# Add libimobiledevice based on availability
+if is_pkg_available "libimobiledevice-1.0-6"; then
+    PKGS="$PKGS libimobiledevice-1.0-6"
+elif is_pkg_available "libimobiledevice6"; then
+    PKGS="$PKGS libimobiledevice6"
+else
+    echo "⚠️  Warning: Neither libimobiledevice-1.0-6 nor libimobiledevice6 found."
 fi
 
-run_sudo apt install -y x11-xserver-utils wget curl gstreamer1.0-tools gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-libav ffmpeg unclutter v4l-utils gvfs-backends gvfs-fuse mtp-tools libmtp-runtime $LIBIMOBILE ifuse
+# Add gstreamer-ugly if available (sometimes omitted in certain distros)
+if is_pkg_available "gstreamer1.0-plugins-ugly"; then
+    PKGS="$PKGS gstreamer1.0-plugins-ugly"
+fi
+
+echo "   -> Installing: $PKGS"
+run_sudo apt install -y $PKGS
 
 # 2. יצירת מבנה תיקיות
 echo "[2/9] Creating directories..."
