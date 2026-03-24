@@ -94,25 +94,62 @@ is_pkg_available() {
     ! apt-cache policy "$1" 2>/dev/null | grep -q "Candidate: (none)"
 }
 
-# Base packages that usually have stable names
-PKGS="x11-xserver-utils wget curl gstreamer1.0-tools gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-libav ffmpeg unclutter v4l-utils gvfs-backends gvfs-fuse mtp-tools libmtp-runtime ifuse"
+# Base packages requested by TacticalDVR
+BASE_PKGS=(
+    x11-xserver-utils
+    wget
+    curl
+    gstreamer1.0-tools
+    gstreamer1.0-plugins-good
+    gstreamer1.0-plugins-bad
+    gstreamer1.0-libav
+    ffmpeg
+    unclutter
+    v4l-utils
+    gvfs-backends
+    gvfs-fuse
+    mtp-tools
+    libmtp-runtime
+    ifuse
+)
 
-# Add libimobiledevice based on availability (Prefer the newer name for Trixie)
+INSTALL_PKGS=()
+MISSING_PKGS=()
+
+# Keep installer resilient across distro/package renames.
+for pkg in "${BASE_PKGS[@]}"; do
+    if is_pkg_available "$pkg"; then
+        INSTALL_PKGS+=("$pkg")
+    else
+        MISSING_PKGS+=("$pkg")
+    fi
+done
+
+# libimobiledevice renamed in newer Debian releases.
 if is_pkg_available "libimobiledevice-1.0-6"; then
-    PKGS="$PKGS libimobiledevice-1.0-6"
+    INSTALL_PKGS+=("libimobiledevice-1.0-6")
 elif is_pkg_available "libimobiledevice6"; then
-    PKGS="$PKGS libimobiledevice6"
+    INSTALL_PKGS+=("libimobiledevice6")
 else
-    echo "⚠️  Warning: Neither libimobiledevice-1.0-6 nor libimobiledevice6 found."
+    MISSING_PKGS+=("libimobiledevice-1.0-6|libimobiledevice6")
 fi
 
-# Add gstreamer-ugly if available (sometimes omitted in certain distros)
+# Optional in some repos.
 if is_pkg_available "gstreamer1.0-plugins-ugly"; then
-    PKGS="$PKGS gstreamer1.0-plugins-ugly"
+    INSTALL_PKGS+=("gstreamer1.0-plugins-ugly")
 fi
 
-echo "   -> Installing: $PKGS"
-run_sudo apt install -y $PKGS
+if [ "${#INSTALL_PKGS[@]}" -eq 0 ]; then
+    echo "❌ ERROR: No installable dependencies found after apt update."
+    exit 1
+fi
+
+echo "   -> Installing: ${INSTALL_PKGS[*]}"
+run_sudo apt install -y "${INSTALL_PKGS[@]}"
+
+if [ "${#MISSING_PKGS[@]}" -gt 0 ]; then
+    echo "⚠️  Skipped unavailable packages: ${MISSING_PKGS[*]}"
+fi
 
 # 2. יצירת מבנה תיקיות
 echo "[2/9] Creating directories..."
