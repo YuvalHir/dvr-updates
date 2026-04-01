@@ -2,7 +2,7 @@
 
 # ==========================================
 #  TACTICAL DVR - FIELD INSTALLATION SCRIPT
-#  Version: 1.6.5 (Zero-Auth Ready)
+#  Version: 2.0.0 (Zero-Auth Ready)
 # ==========================================
 
 # Exit on error, but handle some errors manually
@@ -241,21 +241,6 @@ NEED_PLAYER=true
 if is_online; then
     echo "🌐 System is online. Checking for updates..."
     
-    if [ -f "./tactical_recorder" ] && [ -n "$RECORDER_SHA_URL" ]; then
-        if verify_sha "tactical_recorder" "./tactical_recorder" "$RECORDER_SHA_URL"; then
-            echo "   -> Local tactical_recorder is up to date."
-            cp "./tactical_recorder" "$PROJECT_DIR/dist/tactical_recorder"
-            NEED_RECORDER=false
-        fi
-    fi
-    
-    if [ "$NEED_RECORDER" = true ] && [ -f "$PROJECT_DIR/dist/tactical_recorder" ] && [ -n "$RECORDER_SHA_URL" ]; then
-        if verify_sha "tactical_recorder" "$PROJECT_DIR/dist/tactical_recorder" "$RECORDER_SHA_URL"; then
-            echo "   -> Installed tactical_recorder is up to date."
-            NEED_RECORDER=false
-        fi
-    fi
-
     if [ -f "./tactical_player" ] && [ -n "$PLAYER_SHA_URL" ]; then
         if verify_sha "tactical_player" "./tactical_player" "$PLAYER_SHA_URL"; then
             echo "   -> Local tactical_player is up to date."
@@ -285,15 +270,6 @@ else
 fi
 
 # Download if still needed
-if [ "$NEED_RECORDER" = true ]; then
-    if [ -n "$RECORDER_URL" ]; then
-        echo "   -> Downloading latest tactical_recorder..."
-        curl -L -o "$PROJECT_DIR/dist/tactical_recorder" "$RECORDER_URL"
-    else
-        echo "❌ ERROR: Could not find tactical_recorder in release $TAG"
-        exit 1
-    fi
-fi
 if [ "$NEED_PLAYER" = true ]; then
     if [ -n "$PLAYER_URL" ]; then
         echo "   -> Downloading latest tactical_player..."
@@ -310,21 +286,9 @@ chmod +x "$PROJECT_DIR/dist/tactical_recorder"
 chmod +x "$PROJECT_DIR/dist/tactical_player"
 run_sudo chown -R $USER_NAME:$USER_NAME "$PROJECT_DIR"
 
-if [ "$IS_UPDATE" = true ]; then
-    echo "[Update] Restarting services..."
-    "$PROJECT_DIR/watchdog.sh" &
-else
-    # 6. הגדרת כניסה אוטומטית
-    echo "[6/9] Configuring Auto-login..."
-    run_sudo groupadd -r autologin 2>/dev/null || true
-    run_sudo gpasswd -a $USER_NAME autologin
-    run_sudo gpasswd -a $USER_NAME video
-    run_sudo sed -i "s/^#\?autologin-user=.*/autologin-user=$USER_NAME/" /etc/lightdm/lightdm.conf
-    run_sudo sed -i "s/^#\?autologin-user-timeout=.*/autologin-user-timeout=0/" /etc/lightdm/lightdm.conf
-
-    # 7. יצירת סקריפט ה-Watchdog
-    echo "[7/9] Creating Watchdog script..."
-    cat <<EOF > "$PROJECT_DIR/watchdog.sh"
+# Always create or update Watchdog script
+echo "[7/9] Creating Watchdog script..."
+cat <<EOF > "$PROJECT_DIR/watchdog.sh"
 #!/bin/bash
 export DISPLAY=:0
 export XAUTHORITY=\$HOME/.Xauthority
@@ -364,12 +328,23 @@ manage_app() {
 }
 mkdir -p "\$LOG_DIR"
 cd "$PROJECT_DIR" || exit 1
-manage_app "recorder" "$PROJECT_DIR/dist/tactical_recorder" &
-sleep 2
+# Tactical Recorder has been merged into tactical_player.
 manage_app "player" "$PROJECT_DIR/dist/tactical_player" &
 wait
 EOF
-    chmod +x "$PROJECT_DIR/watchdog.sh"
+chmod +x "$PROJECT_DIR/watchdog.sh"
+
+if [ "$IS_UPDATE" = true ]; then
+    echo "[Update] Restarting services..."
+    "$PROJECT_DIR/watchdog.sh" &
+else
+    # 6. הגדרת כניסה אוטומטית
+    echo "[6/9] Configuring Auto-login..."
+    run_sudo groupadd -r autologin 2>/dev/null || true
+    run_sudo gpasswd -a $USER_NAME autologin
+    run_sudo gpasswd -a $USER_NAME video
+    run_sudo sed -i "s/^#\?autologin-user=.*/autologin-user=$USER_NAME/" /etc/lightdm/lightdm.conf
+    run_sudo sed -i "s/^#\?autologin-user-timeout=.*/autologin-user-timeout=0/" /etc/lightdm/lightdm.conf
 
     # 8. הגדרת Autostart
     echo "[8/9] Setting up Autostart..."
