@@ -89,6 +89,7 @@ if [ -f "$PROJECT_DIR/watchdog.sh" ]; then
     pkill -9 -f watchdog.sh 2>/dev/null || true
     pkill -9 -f tactical_recorder 2>/dev/null || true
     pkill -9 -f tactical_player 2>/dev/null || true
+    pkill -9 unclutter 2>/dev/null || true
     sleep 1
 else
     IS_UPDATE=false
@@ -138,7 +139,6 @@ BASE_PKGS=(
     gstreamer1.0-plugins-bad
     gstreamer1.0-libav
     ffmpeg
-    unclutter
     v4l-utils
     gvfs-backends
     gvfs-fuse
@@ -320,8 +320,6 @@ if command -v xfconf-query >/dev/null 2>&1; then
     xfconf-query -c xfce4-power-manager -p /xfce4-power-manager/dpms-enabled -s false 2>/dev/null
     xfconf-query -c xfce4-screensaver -p /saver/enabled -s false 2>/dev/null
 fi
-
-unclutter -idle 0.1 -root & 
 
 LOG_DIR="$PROJECT_DIR/logs"
 manage_app() {
