@@ -294,7 +294,6 @@ fi
 
 # 5. הגדרת הרשאות
 echo "[5/9] Setting permissions..."
-chmod +x "$PROJECT_DIR/dist/tactical_recorder"
 chmod +x "$PROJECT_DIR/dist/tactical_player"
 run_sudo chown -R $USER_NAME:$USER_NAME "$PROJECT_DIR"
 
@@ -309,6 +308,10 @@ export XAUTHORITY=\$HOME/.Xauthority
 xrandr --output HDMI-1 --set "max bpc" 8 2>/dev/null
 xrandr --output HDMI-1 --set "Broadcast RGB" "Limited 16-235" 2>/dev/null
 xrandr --output HDMI-1 --mode 1920x1080 --rate 60 2>/dev/null
+
+# Disable the XFCE "New Display Connected" popup
+xfconf-query -c displays -p /Notify -n -t bool -s false 2>/dev/null
+xfconf-query -c displays -p /Notify -s false 2>/dev/null
 
 pkill -f xscreensaver 2>/dev/null
 xset s off
