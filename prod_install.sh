@@ -145,6 +145,8 @@ BASE_PKGS=(
     mtp-tools
     libmtp-runtime
     ifuse
+    ufw
+    network-manager
 )
 
 INSTALL_PKGS=()
@@ -294,6 +296,7 @@ fi
 
 # 5. הגדרת הרשאות
 echo "[5/9] Setting permissions..."
+chmod +x "$PROJECT_DIR/dist/tactical_recorder"
 chmod +x "$PROJECT_DIR/dist/tactical_player"
 run_sudo chown -R $USER_NAME:$USER_NAME "$PROJECT_DIR"
 
@@ -308,10 +311,6 @@ export XAUTHORITY=\$HOME/.Xauthority
 xrandr --output HDMI-1 --set "max bpc" 8 2>/dev/null
 xrandr --output HDMI-1 --set "Broadcast RGB" "Limited 16-235" 2>/dev/null
 xrandr --output HDMI-1 --mode 1920x1080 --rate 60 2>/dev/null
-
-# Disable the XFCE "New Display Connected" popup
-xfconf-query -c displays -p /Notify -n -t bool -s false 2>/dev/null
-xfconf-query -c displays -p /Notify -s false 2>/dev/null
 
 pkill -f xscreensaver 2>/dev/null
 xset s off
@@ -372,6 +371,21 @@ X-GNOME-Autostart-enabled=true
 Name=Tactical DVR
 EOF
 
+    echo "   -> Creating Desktop Shortcut..."
+    mkdir -p ~/Desktop
+    cat <<EOF > ~/Desktop/Tactical_DVR.desktop
+[Desktop Entry]
+Type=Application
+Exec=$PROJECT_DIR/watchdog.sh
+Icon=$PROJECT_DIR/assets/tactical_logo.png
+Name=Launch Tactical DVR
+Comment=Start the Tactical DVR system manually
+Terminal=false
+EOF
+    chmod +x ~/Desktop/Tactical_DVR.desktop
+    # Make sure it's owned by the user just in case
+    run_sudo chown $USER_NAME:$USER_NAME ~/Desktop/Tactical_DVR.desktop 2>/dev/null || true
+
     # 9. הגדרת GRUB
     echo "[9/9] Configuring system..."
     run_sudo sed -i 's/^GRUB_CMDLINE_LINUX_DEFAULT=.*/GRUB_CMDLINE_LINUX_DEFAULT="quiet splash net.ifnames=0 biosdevname=0"/' /etc/default/grub
@@ -416,6 +430,78 @@ if lspci | grep -i "vga.*intel" > /dev/null; then
     else
         echo "   ⚠️  'vainfo' not available; skipped VAAPI runtime verification."
     fi
+fi
+
+# ==========================================
+# 10. Security Hardening
+# ==========================================
+echo "[10/10] Applying Security Hardening..."
+
+# UFW Firewall
+if command -v ufw >/dev/null 2>&1; then
+    echo "   -> Configuring Firewall (UFW)..."
+    # Ensure idempotent by resetting or just setting rules
+    run_sudo ufw --force reset >/dev/null 2>&1
+    run_sudo ufw default deny incoming >/dev/null 2>&1
+    run_sudo ufw default allow outgoing >/dev/null 2>&1
+    run_sudo ufw allow 2222/tcp >/dev/null 2>&1 # Custom SSH port
+    run_sudo ufw --force enable >/dev/null 2>&1
+    echo "   ✅ Firewall enabled (Incoming dropped, SSH on 2222 allowed)."
+fi
+
+# SSH Hardening
+if [ -f /etc/ssh/sshd_config ]; then
+    echo "   -> Hardening SSH..."
+    run_sudo sed -i 's/^#*Port .*/Port 2222/' /etc/ssh/sshd_config
+    run_sudo sed -i 's/^#*PermitRootLogin .*/PermitRootLogin no/' /etc/ssh/sshd_config
+    run_sudo systemctl restart sshd 2>/dev/null || run_sudo systemctl restart ssh 2>/dev/null || true
+    echo "   ✅ SSH moved to port 2222 and root login disabled."
+fi
+
+# Sysctl Network Hardening (Disable IP Forwarding, enable SYN cookies)
+echo "   -> Hardening Network (Sysctl)..."
+cat <<EOF | run_sudo tee /etc/sysctl.d/99-tactical-security.conf > /dev/null
+# Tactical DVR Security Settings
+net.ipv4.ip_forward = 0
+net.ipv6.conf.all.forwarding = 0
+net.ipv4.tcp_syncookies = 1
+net.ipv4.conf.all.accept_redirects = 0
+net.ipv4.conf.all.send_redirects = 0
+EOF
+run_sudo sysctl -p /etc/sysctl.d/99-tactical-security.conf >/dev/null 2>&1 || true
+echo "   ✅ Network hardened."
+
+# Set DNS to 8.8.8.8 globally using NetworkManager or systemd-resolved
+echo "   -> Setting global DNS to 8.8.8.8..."
+if command -v nmcli >/dev/null 2>&1; then
+    # Add sudoers rule for nmcli so the Tactical UI can toggle Wi-Fi without OS prompts
+    echo "$USER_NAME ALL=(ALL) NOPASSWD: /usr/bin/nmcli" | run_sudo tee /etc/sudoers.d/010_tactical-nmcli > /dev/null
+    run_sudo chmod 0440 /etc/sudoers.d/010_tactical-nmcli
+    
+    # We will set 8.8.8.8 for all active connections
+    for conn in $(nmcli -t -f UUID connection show); do
+        run_sudo nmcli connection modify "$conn" ipv4.dns "8.8.8.8" 2>/dev/null || true
+        run_sudo nmcli connection modify "$conn" ipv4.ignore-auto-dns yes 2>/dev/null || true
+    done
+    run_sudo systemctl restart NetworkManager 2>/dev/null || true
+fi
+echo "   ✅ DNS Updated."
+
+# Enforce noexec for UDisks2 (External USBs)
+echo "   -> Enforcing noexec for external mounts..."
+cat <<EOF | run_sudo tee /etc/udev/rules.d/99-usb-noexec.rules > /dev/null
+# Force noexec on USB storage block devices
+ACTION=="add|change", SUBSYSTEM=="block", ENV{ID_BUS}=="usb", ENV{UDISKS_MOUNT_OPTIONS_DEFAULTS}="nosuid,nodev,noexec"
+EOF
+run_sudo udevadm control --reload-rules || true
+run_sudo udevadm trigger || true
+echo "   ✅ USB drives secured with noexec."
+
+# Turn OFF Wi-Fi at the end of installation
+if command -v nmcli >/dev/null 2>&1; then
+    echo "   -> Disabling Wi-Fi to ensure air-gapped state..."
+    run_sudo nmcli radio wifi off
+    echo "   ✅ Wi-Fi disabled."
 fi
 
 echo "============================================="
