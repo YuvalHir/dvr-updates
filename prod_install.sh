@@ -296,7 +296,6 @@ fi
 
 # 5. הגדרת הרשאות
 echo "[5/9] Setting permissions..."
-chmod +x "$PROJECT_DIR/dist/tactical_recorder"
 chmod +x "$PROJECT_DIR/dist/tactical_player"
 run_sudo chown -R $USER_NAME:$USER_NAME "$PROJECT_DIR"
 
